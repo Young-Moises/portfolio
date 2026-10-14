@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NAT hairpin: works from outside, fails from inside — Illia Nikitchenko</title>
+  <meta name="description" content="Why a WireGuard server reachable over mobile data could not be reached from the home network via its domain name.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/" class="active">Cases</a>
+      <a href="/infrastructure/">Infrastructure</a>
+      <a href="/lab/">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="crumbs"><a href="/">Home</a> / <a href="/cases/">Cases</a></p>
+  <h1>Works from outside, fails from inside: NAT hairpin</h1>
+  <p class="lead">A WireGuard server that answered perfectly over mobile data, but not from the home Wi-Fi when I used its domain name.</p>
+  <ul class="tags">
+    <li>WireGuard</li><li>NAT</li><li>DNS</li><li>Port forwarding</li><li>Troubleshooting</li>
+  </ul>
+
+  <h2>Setup</h2>
+  <ul>
+    <li>Debian 13 server on the home LAN with a static address (<code>192.168.x.x</code>).</li>
+    <li>WireGuard listening on <code>51820/UDP</code>, allowed in ufw.</li>
+    <li>Home router (ISP-provided) forwards <code>51820/UDP</code> to the server.</li>
+    <li>Dynamic DNS name pointing at the home's changing public IP.</li>
+    <li>Clients (laptop, phone) configured with <code>Endpoint = my-domain.example:51820</code>.</li>
+  </ul>
+
+  <figure>
+    <svg viewBox="0 0 700 260" role="img" aria-label="Diagram comparing a working connection from mobile data and a failing connection from inside the LAN through the public IP">
+      <rect class="box" x="10" y="20" width="110" height="50" rx="8"/>
+      <text x="65" y="50" text-anchor="middle">Phone (4G)</text>
+
+      <rect class="box" x="10" y="180" width="110" height="50" rx="8"/>
+      <text x="65" y="205" text-anchor="middle">Laptop (LAN)</text>
+      <text class="small" x="65" y="221" text-anchor="middle">home Wi-Fi</text>
+
+      <rect class="box" x="300" y="100" width="110" height="60" rx="8"/>
+      <text x="355" y="126" text-anchor="middle">Router</text>
+      <text class="small" x="355" y="144" text-anchor="middle">public IP + NAT</text>
+
+      <rect class="box hl" x="570" y="100" width="120" height="60" rx="8"/>
+      <text x="630" y="126" text-anchor="middle">WireGuard server</text>
+      <text class="small" x="630" y="144" text-anchor="middle">192.168.x.x</text>
+
+      <path class="ok" d="M120 45 L300 120"/>
+      <path class="ok" d="M410 130 L570 130"/>
+      <path class="bad" d="M120 205 L300 145"/>
+
+      <text class="small" x="150" y="70">via public IP: works</text>
+      <text class="small" x="130" y="185">via public IP: no reply</text>
+    </svg>
+    <figcaption>Same domain name, same port. Only the network the client sits on differs.</figcaption>
+  </figure>
+
+  <h2>Symptom</h2>
+  <p>
+    Over mobile data, the tunnel came up, and SSH and ping through it worked.
+    From the home Wi-Fi with the same config, the handshake never completed.
+  </p>
+
+  <h2>Hypotheses I checked</h2>
+  <table>
+    <tr><th>Hypothesis</th><th>How I checked</th><th>Result</th></tr>
+    <tr><td>ufw blocks 51820/UDP</td><td><code>sudo ufw status</code></td><td>Rule present, and mobile clients connected, so ruled out</td></tr>
+    <tr><td>Port forward is wrong</td><td>Test from mobile data</td><td>Works from outside, so ruled out</td></tr>
+    <tr><td>Dynamic DNS name is stale</td><td>Compare <code>dig +short my-domain.example</code> with the router's WAN IP</td><td>Matched, so ruled out</td></tr>
+    <tr><td>Key or config mistake on the client</td><td>Same config on the phone over 4G</td><td>Works, so ruled out</td></tr>
+    <tr><td>Router does not loop internal traffic back (NAT hairpin)</td><td>Connect to the server's local IP instead of the domain</td><td>Works, which points to this</td></tr>
+  </table>
+
+  <h2>Diagnosis</h2>
+  <p>A useful check is to watch the WireGuard port on the server while a client connects:</p>
+  <pre><code>sudo tcpdump -ni any udp port 51820</code></pre>
+  <p>
+    From mobile data, packets show up. From the LAN via the domain name, nothing arrives.
+    The packets never reach the server, so the problem is not WireGuard or the firewall.
+  </p>
+
+  <h2>Root cause</h2>
+  <p>
+    The domain resolves to the router's <em>public</em> IP. A LAN client sends its packet to that address,
+    which is the router itself. For this to work, the router must recognise that the destination is its own
+    public IP, apply the port-forward rule, and send the packet back into the LAN to the server. This is called
+    <strong>NAT hairpinning</strong> (or NAT loopback). Many consumer routers, including my ISP's, do not support it.
+    This is a limitation of the router, not a bug in my configuration.
+  </p>
+
+  <h2>Fix</h2>
+  <p>Use two endpoints depending on where the client is:</p>
+  <pre><code># Inside the home network
+Endpoint = 192.168.x.x:51820
+
+# Outside the home network
+Endpoint = my-domain.example:51820</code></pre>
+  <p>Other options I considered:</p>
+  <ul>
+    <li><strong>Split DNS:</strong> a local DNS record so the domain resolves to the LAN IP inside the network.</li>
+    <li><strong>Replace or reconfigure the router</strong> with one that supports NAT loopback.</li>
+    <li><strong>Reverse the direction:</strong> the lab connects <em>out</em> to a WireGuard hub on a VPS, so no port forward on the home router is needed at all. This is the design I chose later.</li>
+  </ul>
+
+  <h2>What I learned</h2>
+  <ul>
+    <li>Before touching configs, find out what differs between the working and the failing case. Here it was only the client's network.</li>
+    <li>"Works from outside" is a strong clue: it rules out the server, the firewall and the port forward in one test.</li>
+    <li>A DNS name that points to a public IP behaves differently inside and outside the LAN.</li>
+    <li>Some problems are limits of the equipment. Knowing when to stop debugging and design around it is part of the job.</li>
+  </ul>
+
+  <a class="back" href="/cases/">← Back to all cases</a>
+</main>
+
+<footer>
+  <div class="wrap">Addresses and domain names in this write-up are placeholders. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>

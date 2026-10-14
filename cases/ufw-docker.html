@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The ufw fix that uninstalled ufw — Illia Nikitchenko</title>
+  <meta name="description" content="Closing the gap between Docker and ufw on a VPS firewall, and the package conflict that quietly removed ufw entirely while trying to fix it.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/" class="active">Cases</a>
+      <a href="/infrastructure/">Infrastructure</a>
+      <a href="/lab/">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="crumbs"><a href="/">Home</a> / <a href="/cases/">Cases</a></p>
+  <h1>The ufw fix that uninstalled ufw</h1>
+  <p class="lead">Closing a known gap between Docker and ufw should have been a quiet five-minute job. Instead, a single <code>apt install</code> quietly removed the firewall I was trying to fix — and I almost didn't notice.</p>
+  <ul class="tags">
+    <li>Docker</li><li>ufw</li><li>iptables</li><li>Firewall</li><li>Troubleshooting</li>
+  </ul>
+
+  <h2>Starting point</h2>
+  <p>
+    The VPS behind this site runs Caddy in Docker, with <code>ufw</code> handling the firewall: only SSH, 80 and 443
+    allowed in, everything else denied by default. That part had been true since the server was first set up.
+    What I hadn't fixed yet was a known limitation, sitting on this site's own <a href="/lab/">loose-ends list</a>:
+    <strong>Docker manages its own firewall rules and does not ask ufw for permission.</strong>
+  </p>
+
+  <h2>The gap</h2>
+  <p>
+    When a container is published with <code>-p 80:80</code>, Docker inserts its own rules directly into
+    <code>iptables</code>, in a chain that traffic reaches <em>before</em> it would ever hit ufw's own chains.
+    So if I later ran a test container on this same server with, say, <code>-p 5432:5432</code> for a database
+    I was only meant to reach locally, Docker would cheerfully expose port 5432 to the entire internet —
+    while <code>ufw status</code> kept insisting that only 22, 80 and 443 were open. Technically true, and also wrong.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 240" role="img" aria-label="Diagram: normal traffic passes through ufw's chains, while Docker-published ports bypass ufw entirely unless a DOCKER-USER rule is added">
+      <rect class="box" x="10" y="20" width="110" height="50" rx="8"/>
+      <text x="65" y="50" text-anchor="middle">Internet</text>
+
+      <rect class="box" x="260" y="20" width="140" height="50" rx="8"/>
+      <text x="330" y="45" text-anchor="middle">ufw (INPUT chain)</text>
+      <text class="small" x="330" y="61" text-anchor="middle">SSH, direct host traffic</text>
+
+      <rect class="box" x="530" y="20" width="140" height="50" rx="8"/>
+      <text x="600" y="45" text-anchor="middle">Host service</text>
+      <text class="small" x="600" y="61" text-anchor="middle">allowed ports only</text>
+
+      <rect class="box" x="260" y="150" width="140" height="50" rx="8"/>
+      <text x="330" y="175" text-anchor="middle">Docker NAT / FORWARD</text>
+      <text class="small" x="330" y="191" text-anchor="middle">bypasses ufw by default</text>
+
+      <rect class="box hl" x="530" y="150" width="140" height="50" rx="8"/>
+      <text x="600" y="170" text-anchor="middle">DOCKER-USER chain</text>
+      <text class="small" x="600" y="186" text-anchor="middle">rule added here</text>
+
+      <path class="ok" d="M120 45 L260 45"/>
+      <path class="ok" d="M400 45 L530 45"/>
+      <path class="line" d="M120 55 L260 175"/>
+      <path class="ok" d="M400 175 L530 175"/>
+    </svg>
+    <figcaption>Everything that reaches a container goes through Docker's own chains first — ufw never sees it unless something explicitly tells Docker's chain to check.</figcaption>
+  </figure>
+
+  <h2>First fix: a rule in DOCKER-USER</h2>
+  <p>
+    <code>DOCKER-USER</code> is a chain Docker creates and always checks first, specifically left empty for the
+    admin to fill in. Adding a rule there is the one supported way to restrict Docker's own port publishing
+    without fighting Docker on every container restart:
+  </p>
+  <pre><code>sudo iptables -I DOCKER-USER -i eth0 -p tcp -m multiport ! --dports 80,443 -j DROP
+sudo iptables -I DOCKER-USER -i eth0 -p udp -m multiport ! --dports 443 -j DROP</code></pre>
+  <p>
+    In plain terms: anything arriving from the internet through Docker, destined for a port that isn't 80 or 443,
+    gets silently dropped. SSH isn't affected — it never goes through Docker's chains in the first place.
+  </p>
+  <p>Tested, worked immediately. The only thing left was making it survive a reboot.</p>
+
+  <h2>Making it permanent</h2>
+  <p>
+    Manually-added <code>iptables</code> rules vanish on restart unless something reapplies them at boot.
+    The obvious-looking answer is the <code>iptables-persistent</code> package:
+  </p>
+  <pre><code>sudo apt install iptables-persistent -y</code></pre>
+
+  <h2>Symptom</h2>
+  <p>Buried in the installer's summary, one line that's easy to read past:</p>
+  <pre><code>Installing:
+  iptables-persistent
+
+Installing dependencies:
+  netfilter-persistent
+
+REMOVING:
+  ufw</code></pre>
+  <p>
+    Installing a package to persist a firewall rule had just uninstalled the firewall. No prompt, no confirmation —
+    just a line in a longer scroll of apt output.
+  </p>
+
+  <h2>Checking the damage</h2>
+  <table>
+    <tr><th>What I checked</th><th>Command</th><th>Result</th></tr>
+    <tr><td>Was the live protection actually gone?</td><td><code>sudo iptables -S INPUT</code></td><td>Still jumping into <code>ufw-before-input</code>, <code>ufw-after-input</code>, etc. — the old rules were still loaded in the kernel, just orphaned</td></tr>
+    <tr><td>Could I still manage it?</td><td><code>sudo ufw status</code></td><td><code>command not found</code> — the binary and service were gone, only the stale rules remained</td></tr>
+    <tr><td>Were the old allow rules still saved on disk?</td><td><code>sudo ufw show added</code> (after reinstalling)</td><td>OpenSSH, 80, 443 — all intact, <code>apt remove</code> had not touched the config files under <code>/etc/ufw/</code></td></tr>
+  </table>
+  <p>
+    So the live site was never actually exposed — the currently-loaded kernel rules kept working. But that was luck,
+    not design: the next reboot would have started with no firewall service to reapply anything, leaving only
+    whatever Docker itself decided to open.
+  </p>
+
+  <h2>Root cause</h2>
+  <p>
+    <code>ufw</code> and <code>iptables-persistent</code> both want to be the thing that restores firewall state
+    at boot. apt's dependency resolver treated that as a conflict and picked a side — silently removing <code>ufw</code>
+    to satisfy the new package — rather than refusing the install or asking. Nothing in the installer's prompts called
+    this out explicitly; it only shows up as one line in the "Summary" block if you're reading closely.
+  </p>
+
+  <h2>Fix</h2>
+  <p>Backed out of the conflicting package, and went back to a single tool managing the whole firewall:</p>
+  <pre><code>sudo apt remove iptables-persistent netfilter-persistent -y
+sudo apt install ufw -y
+sudo ufw show added          # confirm the old rules are still there first
+sudo ufw enable
+sudo ufw status verbose</code></pre>
+  <p>
+    The Docker-specific rule moved out of the removed package entirely and into a file <code>ufw</code> already
+    applies on every enable and reload — <code>/etc/ufw/after.rules</code>:
+  </p>
+  <pre><code># BEGIN UFW AND DOCKER
+*filter
+:DOCKER-USER - [0:0]
+-A DOCKER-USER -i eth0 -p tcp -m multiport ! --dports 80,443 -j DROP
+-A DOCKER-USER -i eth0 -p udp -m multiport ! --dports 443 -j DROP
+-A DOCKER-USER -j RETURN
+COMMIT
+# END UFW AND DOCKER</code></pre>
+  <pre><code>sudo ufw reload
+sudo iptables -L DOCKER-USER -n -v --line-numbers</code></pre>
+  <p>One tool, one place, one thing to remember to back up.</p>
+
+  <h2>Result</h2>
+  <table>
+    <tr><th></th><th>Before</th><th>After</th></tr>
+    <tr><td>ufw</td><td>Managing SSH/80/443, unaware of Docker</td><td>Managing SSH/80/443 and the Docker rule, in one config</td></tr>
+    <tr><td>Docker-published ports</td><td>Anything <code>-p</code> exposes reaches the internet, ufw or not</td><td>Only 80/443 reachable, regardless of what a container later publishes</td></tr>
+    <tr><td>Persistence</td><td>Two competing tools, one of which just got uninstalled by the other</td><td>A single <code>ufw reload</code> reapplies everything, including the Docker rule</td></tr>
+  </table>
+
+  <h2>Smaller things that went wrong</h2>
+  <ul>
+    <li>
+      Separately, while turning on HTTP/3 the same evening, a stray extra dash in <code>compose.yaml</code>
+      (<code>-- "443:443/udp"</code> instead of <code>- "443:443/udp"</code>) broke the YAML parser with a cryptic
+      <code>could not find expected ':'</code>. YAML's whitespace- and punctuation-sensitivity makes this kind of
+      typo easy to introduce and surprisingly unobvious to read back.
+    </li>
+    <li>
+      Ran <code>docker compose up -d</code> from the home directory instead of <code>~/caddy</code> — Compose
+      only looks for <code>compose.yaml</code> in the current directory, so it quietly did nothing and reported
+      <code>no configuration file provided: not found</code> instead of guessing where the file might be.
+    </li>
+  </ul>
+
+  <h2>What I learned</h2>
+  <ul>
+    <li>A package install's "Summary" block is worth reading in full, not just the top line — <code>REMOVING: ufw</code> was three lines down from the part that looked relevant.</li>
+    <li>Two tools that both want to own the same piece of system state (here: what iptables looks like at boot) are a conflict waiting to surface, even if nothing says so loudly.</li>
+    <li>Before trusting a fresh firewall tool after reinstalling it, check what it would apply (<code>ufw show added</code>) before telling it to actually apply anything — cheap insurance against locking yourself out over SSH.</li>
+    <li>Keeping a second SSH session open while touching firewall rules on a remote box is not paranoia, it's the rollback plan.</li>
+  </ul>
+
+  <h2>Loose ends</h2>
+  <p>
+    The <code>DOCKER-USER</code> rule only filters IPv4 right now (<code>eth0</code>); the server also has a public
+    IPv6 address, which means an equivalent <code>ip6tables</code> rule is still open work. Also on the list:
+    extending this same pattern (ufw + explicit Docker rule) before any future lab container gets a <code>-p</code>
+    flag on this box.
+  </p>
+
+  <a class="back" href="/cases/">← Back to all cases</a>
+</main>
+
+<footer>
+  <div class="wrap">The domain and configuration shown here are real. The server's IP address and username are left out on purpose. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>

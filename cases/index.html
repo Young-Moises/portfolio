@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cases — Illia Nikitchenko</title>
+  <meta name="description" content="Troubleshooting write-ups from Illia Nikitchenko's own home lab and VPS setup.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/" class="active">Cases</a>
+      <a href="/infrastructure/">Infrastructure</a>
+      <a href="/lab/">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Cases</h1>
+  <p class="lead">Real problems from my own setup, written as: symptom → hypotheses → diagnosis → cause → fix → lessons.</p>
+    
+  <a class="card" href="/cases/ufw-docker.html">
+    <h3>The ufw fix that uninstalled ufw</h3>
+    <p>Closing a gap between Docker and ufw, and the apt install that silently removed ufw while I was trying to fix it.</p>
+    <div class="meta">Docker · ufw · iptables · Firewall</div>
+  </a>
+  <a class="card" href="/cases/caddy-docker.html">
+    <h3>Caddy in Docker, and the www certificate that wouldn't issue</h3>
+    <p>Moving this site's web server into a container, then debugging why the apex got HTTPS in seconds and www kept failing.</p>
+    <div class="meta">Docker · Caddy · TLS · DNS</div>
+  </a>
+  <a class="card" href="/cases/nat-hairpin.html">
+    <h3>Works from outside, fails from inside: NAT hairpin</h3>
+    <p>A WireGuard server reachable over mobile data but not from the home Wi-Fi. Three days of debugging, and the answer was not a misconfiguration.</p>
+    <div class="meta">Networking · WireGuard · DNS</div>
+  </a>
+  <div class="card soon">
+    <h3>Locked out by my own firewall</h3>
+    <p>Enabling ufw without an SSH allow rule. Recovery and a safe order of operations.</p>
+    <div class="meta">Coming soon · Linux · Security</div>
+  </div>
+  <div class="card soon">
+    <h3>DHCP moved my server and took the port forward with it</h3>
+    <p>Why port forwarding needs a static address or a DHCP reservation.</p>
+    <div class="meta">Coming soon · Networking</div>
+  </div>
+  <div class="card soon">
+    <h3>SSH login fails on Debian 13: where are the logs?</h3>
+    <p>journalctl instead of /var/log/auth.log.</p>
+    <div class="meta">Coming soon · Linux</div>
+  </div>
+
+  <p class="crumbs"><a href="/">← Home</a></p>
+</main>
+
+<footer>
+  <div class="wrap">Built by hand with plain HTML and CSS, served by Caddy in a Docker container on a VPS. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>

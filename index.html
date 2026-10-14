@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Illia Nikitchenko — IT Support &amp; Infrastructure</title>
+  <meta name="description" content="Portfolio of Illia Nikitchenko: home lab, Linux, networking and troubleshooting write-ups.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/">Cases</a>
+      <a href="/infrastructure/">Infrastructure</a>
+      <a href="/lab/">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Hands-on IT support &amp; infrastructure.</h1>
+  <p class="lead">
+    I build things at home, break them, and write down how I fixed them.
+    This site runs on a small VPS that I set up and maintain myself.
+  </p>
+  <ul class="tags">
+    <li>Debian / Linux</li>
+    <li>WireGuard</li>
+    <li>SSH hardening</li>
+    <li>ufw / iptables</li>
+    <li>DNS / DHCP / NAT</li>
+    <li>Docker</li>
+    <li>Troubleshooting</li>
+    <li>CompTIA A+ (in progress)</li>
+  </ul>
+
+  <p class="eyebrow">Latest case</p>
+  <a class="card" href="/cases/caddy-docker.html">
+    <h3>Caddy in Docker, and the www certificate that wouldn't issue</h3>
+    <p>Moving this site's web server into a container, then debugging why the apex got HTTPS in seconds and www kept failing.</p>
+    <div class="meta">Docker · Caddy · TLS · DNS</div>
+  </a>
+
+  <p class="eyebrow">Explore</p>
+
+  <a class="teaser" href="/cases/">
+    <h3>Cases</h3>
+    <p>Real problems from my own setup, written as symptom → hypotheses → diagnosis → cause → fix → lessons.</p>
+    <span class="more">View all cases →</span>
+  </a>
+
+  <a class="teaser" href="/infrastructure/">
+    <h3>Infrastructure</h3>
+    <p>How this site is actually hosted: the VPS, the firewall, the container setup, and why it lives outside my home network.</p>
+    <span class="more">See the setup →</span>
+  </a>
+
+  <a class="teaser" href="/lab/">
+    <h3>Lab</h3>
+    <p>My home machine, kept separate from anything public — where I break things on purpose before they go near a real server.</p>
+    <span class="more">Look inside the lab →</span>
+  </a>
+
+  <a class="teaser" href="/learning/">
+    <h3>Learning</h3>
+    <p>What I'm studying right now and what comes after it.</p>
+    <span class="more">See progress →</span>
+  </a>
+</main>
+
+<footer>
+  <div class="wrap">Built by hand with plain HTML and CSS, served by Caddy in a Docker container on a VPS. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>

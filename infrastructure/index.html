@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Infrastructure — Illia Nikitchenko</title>
+  <meta name="description" content="How this site is hosted: VPS, firewall, containers, and the reasoning behind each choice.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/">Cases</a>
+      <a href="/infrastructure/" class="active">Infrastructure</a>
+      <a href="/lab/">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Infrastructure</h1>
+  <p class="lead">
+    Public services (this site) run on a small EU-based VPS: SSH keys only,
+    firewall, automatic security updates, HTTPS. Hosting the public part outside
+    my home network keeps the home network closed and costs less than running a
+    server 24/7 at home.
+  </p>
+
+  <h2>Host</h2>
+  <table>
+    <tr><th>Component</th><th>Choice</th><th>Why</th></tr>
+    <tr><td>Provider</td><td>Hetzner Cloud (Falkenstein, DE)</td><td>EU-based, cheap, well documented</td></tr>
+    <tr><td>OS</td><td>Debian 13 (stable)</td><td>Predictable, matches the lab</td></tr>
+    <tr><td>Access</td><td>SSH keys, no root login, no password auth</td><td>Removes password brute force entirely</td></tr>
+    <tr><td>Firewall</td><td>ufw + fail2ban</td><td>Only 22, 80, 443 open to the internet</td></tr>
+    <tr><td>Updates</td><td>unattended-upgrades</td><td>Security patches without manual work</td></tr>
+  </table>
+
+  <h2>Web server</h2>
+  <p>
+    <strong>Caddy</strong> serves the site and handles HTTPS automatically. It runs
+    inside a <strong>Docker container</strong> rather than installed directly on the host —
+    the host stays free for lab experiments (new services, Docker networking tests,
+    anything that might misbehave) without risking the live site. The container
+    restarts on its own if it crashes. Redeploying the site means copying files into
+    a folder the container reads from: no restart, no system-wide change.
+  </p>
+  <table>
+    <tr><th>Component</th><th>Choice</th><th>Why</th></tr>
+    <tr><td>Runtime</td><td>Docker</td><td>Isolates the web server from host-level experiments</td></tr>
+    <tr><td>Web server</td><td>Caddy (official image)</td><td>Automatic HTTPS, short config, well-maintained image</td></tr>
+    <tr><td>Domain</td><td>Own domain, A records</td><td>nikitchenko.com and www both point straight at the VPS</td></tr>
+    <tr><td>TLS</td><td>Let's Encrypt, issued by Caddy</td><td>Renews on its own; certificates live in a Docker volume, so they survive container rebuilds</td></tr>
+  </table>
+  <p>How the move into Docker went, including the certificate that wouldn't issue: <a href="/cases/caddy-docker.html">Caddy in Docker</a>.</p>
+
+  <h2>Why not just run it at home?</h2>
+  <p>
+    The <a href="/lab/">lab</a> machine used to run WireGuard directly, with the home
+    router forwarding a port to it. That setup worked but kept the home network reachable
+    from the internet and cost real money to keep on 24/7. Moving the public-facing
+    part to a cheap VPS closes that exposure and the lab now connects <em>out</em> to the
+    VPS instead of being reached <em>from</em> the internet.
+  </p>
+
+  <p class="crumbs"><a href="/">← Home</a></p>
+</main>
+
+<footer>
+  <div class="wrap">Built by hand with plain HTML and CSS, served by Caddy in a Docker container on a VPS. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>

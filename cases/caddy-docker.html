@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caddy in Docker, and the www certificate that wouldn't issue — Illia Nikitchenko</title>
+  <meta name="description" content="Moving this site's web server from a host package into a Docker container, adding a domain with automatic HTTPS, and debugging a failed certificate for www.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/" class="active">Cases</a>
+      <a href="/infrastructure/">Infrastructure</a>
+      <a href="/lab/">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="crumbs"><a href="/">Home</a> / <a href="/cases/">Cases</a></p>
+  <h1>Caddy in Docker, and the www certificate that wouldn't issue</h1>
+  <p class="lead">
+    I moved this site's web server off the host and into a container, so I can experiment on
+    the VPS without risking the site. Then I put it on a domain with HTTPS, and the apex got a
+    certificate in seconds while <code>www</code> kept failing.
+  </p>
+  <ul class="tags">
+    <li>Docker</li><li>Caddy</li><li>TLS / Let's Encrypt</li><li>DNS</li><li>Debian 13</li>
+  </ul>
+
+  <h2>Why move it at all</h2>
+  <p>
+    The VPS has two jobs: it serves this site, and it's a machine I want to try things on.
+    With Caddy installed as a host package, those jobs overlap. The config lives in
+    <code>/etc/caddy</code>, the content in <code>/var/www/html</code>, and the service is a
+    systemd unit, so package upgrades, a second web server, firewall changes or Docker
+    networking tests all touch the same system the site depends on.
+  </p>
+  <p>The goal was for the site to depend only on one container and a few folders, so that anything else on the host can break without taking it down.</p>
+
+  <h2>Starting point</h2>
+  <table>
+    <tr><th>Part</th><th>Before</th></tr>
+    <tr><td>Host</td><td>Debian 13 VPS, SSH keys only, ufw allowing 22, 80, 443</td></tr>
+    <tr><td>Web server</td><td>Caddy from the official apt repository, run by systemd</td></tr>
+    <tr><td>Content</td><td><code>/var/www/html</code></td></tr>
+    <tr><td>Exposure</td><td>Plain HTTP on port 80, reached by IP. No domain yet.</td></tr>
+  </table>
+
+  <h2>Target layout</h2>
+  <figure>
+    <svg viewBox="0 0 700 300" role="img" aria-label="Diagram: the browser reaches a Caddy container on the VPS through ports 80 and 443. The container reads its config, the site files and its certificates from three places on the host.">
+      <rect class="box" x="10" y="105" width="120" height="60" rx="8"/>
+      <text x="70" y="131" text-anchor="middle">Browser</text>
+      <text class="small" x="70" y="149" text-anchor="middle">nikitchenko.com</text>
+
+      <rect class="box" x="195" y="15" width="495" height="275" rx="10"/>
+      <text x="215" y="42">VPS · Debian 13</text>
+      <text class="small" x="215" y="60">ufw: 22, 80, 443</text>
+
+      <rect class="box hl" x="225" y="90" width="230" height="90" rx="8"/>
+      <text x="340" y="119" text-anchor="middle">caddy container</text>
+      <text class="small" x="340" y="139" text-anchor="middle">image caddy:latest</text>
+      <text class="small" x="340" y="157" text-anchor="middle">restart: unless-stopped</text>
+
+      <path class="ok" d="M130 135 L225 135"/>
+      <text class="small" x="178" y="126" text-anchor="middle">80 / 443</text>
+
+      <rect class="box" x="505" y="40" width="170" height="50" rx="8"/>
+      <text x="517" y="62">~/caddy/Caddyfile</text>
+      <text class="small" x="517" y="79">→ /etc/caddy/Caddyfile</text>
+
+      <rect class="box" x="505" y="115" width="170" height="50" rx="8"/>
+      <text x="517" y="137">~/caddy/site</text>
+      <text class="small" x="517" y="154">→ /srv (the site)</text>
+
+      <rect class="box" x="505" y="190" width="170" height="50" rx="8"/>
+      <text x="517" y="212">caddy_data volume</text>
+      <text class="small" x="517" y="229">→ /data (certificates)</text>
+
+      <path class="line" d="M455 110 L505 65"/>
+      <path class="line" d="M455 135 L505 140"/>
+      <path class="line" d="M455 160 L505 215"/>
+
+      <text class="small" x="215" y="272">The container can be deleted at any time. Everything it needs lives outside it.</text>
+    </svg>
+    <figcaption>New content gets onto the server with <code>scp</code> into <code>~/caddy/site</code>. The container picks it up without a restart.</figcaption>
+  </figure>
+
+  <h2>Steps</h2>
+
+  <h3>1. Install Docker</h3>
+  <pre><code>curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER   # then log out and back in
+docker run hello-world</code></pre>
+  <p>
+    Adding my user to the <code>docker</code> group means I don't need <code>sudo</code> for every
+    command, but it's effectively root access to the host, since anyone in that group can start a
+    container that mounts <code>/</code>. That's acceptable on a single-admin VPS. I'd think twice
+    about it on a shared one.
+  </p>
+
+  <h3>2. Free ports 80 and 443</h3>
+  <pre><code>sudo systemctl stop caddy
+sudo systemctl disable caddy
+sudo ss -tlnp | grep -E ':80|:443'   # no output = ports are free</code></pre>
+  <p>
+    Only one process can listen on a port, so the host's Caddy had to stop before the container
+    could start. That leaves a gap of a few seconds with nothing serving the site. Here it didn't
+    matter because nothing was live yet. On a real service I'd start the container on a spare port
+    first, test it, and only then switch.
+  </p>
+
+  <h3>3. Keep config and content on the host</h3>
+  <pre><code>mkdir -p ~/caddy/site</code></pre>
+  <p>First version of <code>~/caddy/Caddyfile</code>, still serving HTTP by IP:</p>
+  <pre><code>:80 {
+    root * /srv
+    file_server
+}</code></pre>
+  <p><code>/srv</code> is a path <em>inside</em> the container. The next step maps the host folder onto it.</p>
+
+  <h3>4. Run the container</h3>
+  <pre><code>docker run -d \
+  --name caddy \
+  --restart unless-stopped \
+  -p 80:80 \
+  -p 443:443 \
+  -v ~/caddy/Caddyfile:/etc/caddy/Caddyfile \
+  -v ~/caddy/site:/srv \
+  -v caddy_data:/data \
+  caddy:latest</code></pre>
+  <table>
+    <tr><th>Flag</th><th>Why</th></tr>
+    <tr><td><code>--restart unless-stopped</code></td><td>Comes back after a crash or a reboot. Stays down only if I stop it myself.</td></tr>
+    <tr><td><code>-p 80:80 -p 443:443</code></td><td>Host port → container port. 443 was added in step 5, when HTTPS came in.</td></tr>
+    <tr><td><code>-v ~/caddy/Caddyfile:…</code></td><td>Config is a file on the host that I edit with nano. It isn't baked into the container.</td></tr>
+    <tr><td><code>-v ~/caddy/site:/srv</code></td><td>Content. Deploying means copying files here, with no restart and no rebuild.</td></tr>
+    <tr><td><code>-v caddy_data:/data</code></td><td>Named volume for certificates and the ACME account. Without it, every <code>docker rm</code> throws them away, and re-requesting them repeatedly runs into Let's Encrypt's rate limits.</td></tr>
+  </table>
+  <p>Deploying the site itself, from the laptop:</p>
+  <pre><code># run on the laptop, where the files are
+scp -r site/* user@my-vps:~/caddy/site/</code></pre>
+
+  <h3>5. Domain and HTTPS</h3>
+  <p>
+    At the registrar, I replaced the default <code>ALIAS</code> record on the apex (it pointed at
+    the registrar's parking page) with an <code>A</code> record pointing at the VPS. I also checked
+    it with <code>dig +short nikitchenko.com</code> instead of trusting the browser, which kept
+    showing the registrar's proxy error for a few minutes from cache.
+  </p>
+  <p>Then I swapped the Caddyfile's <code>:80</code> for real names, which is all Caddy needs to request and renew certificates on its own:</p>
+  <pre><code>nikitchenko.com, www.nikitchenko.com {
+    root * /srv
+    file_server
+}</code></pre>
+  <p>I recreated the container with port 443 and the <code>caddy_data</code> volume (the command in step 4).</p>
+
+  <h2>Symptom</h2>
+  <p>
+    <code>nikitchenko.com</code> got a certificate within seconds. <code>www.nikitchenko.com</code>
+    failed both challenge types Caddy tried (log trimmed):
+  </p>
+  <pre><code>challenge failed  identifier=www.nikitchenko.com  challenge_type=tls-alpn-01
+  Cannot negotiate ALPN protocol "acme-tls/1" for tls-alpn-01 challenge
+
+challenge failed  identifier=www.nikitchenko.com  challenge_type=http-01
+  207.207.210.126: Fetching https://nikitchenko-com.l.ink/.well-known/acme-challenge/…:
+  Error getting validation data</code></pre>
+
+  <h2>Hypotheses I checked</h2>
+  <table>
+    <tr><th>Hypothesis</th><th>How I checked</th><th>Result</th></tr>
+    <tr><td>Port 443 isn't reachable</td><td>The apex validated over <code>tls-alpn-01</code> on the same port and the same container</td><td>Ruled out</td></tr>
+    <tr><td><code>www</code> is missing from the Caddyfile</td><td>Startup log lists both names under "automatic TLS certificate management"</td><td>Ruled out</td></tr>
+    <tr><td><code>www</code> resolves to some other server</td><td>The <code>http-01</code> error names the host Let's Encrypt actually reached: the registrar's <code>l.ink</code> service at <code>207.207.210.x</code>. That isn't my server.</td><td>Confirmed</td></tr>
+  </table>
+
+  <h2>Root cause</h2>
+  <p>
+    A new domain at my registrar comes with default records: an <code>ALIAS</code> on the apex
+    <em>and</em> a wildcard <code>CNAME *.nikitchenko.com → uixie.porkbun.com</code>, both pointing
+    at the registrar's parking/link-in-bio service. I replaced the apex record and left the
+    wildcard alone.
+  </p>
+  <p>
+    A wildcard matches any name that has no record of its own, and that includes <code>www</code>.
+    So Let's Encrypt, which validates by connecting to wherever the name resolves, landed on the
+    registrar's servers. Those servers don't speak <code>acme-tls/1</code> and have never heard of
+    Caddy's challenge token, so both challenges failed. Caddy and Docker were working correctly.
+    The DNS record for that one name was wrong.
+  </p>
+
+  <h2>Fix</h2>
+  <p>One record at the registrar:</p>
+  <pre><code>A    www.nikitchenko.com    →  (VPS address)</code></pre>
+  <p>
+    A record for a specific name takes priority over a wildcard, so <code>www</code> now resolves
+    to the VPS. I didn't have to do anything on the server, because Caddy retries failed issuance with
+    backoff (60 s, then 120 s). On the retry it first ran the challenge against Let's Encrypt's
+    <strong>staging</strong> environment, and only after that succeeded did it request the real
+    certificate:
+  </p>
+  <pre><code>obtaining certificate     identifier=www.nikitchenko.com  ca=acme-staging-v02…
+authorization finalized   authz_status=valid              ca=acme-staging-v02…
+authorization finalized   authz_status=valid              ca=acme-v02…
+certificate obtained successfully  identifier=www.nikitchenko.com</code></pre>
+  <p>
+    That staging step keeps a broken setup from burning through production rate limits. I also
+    ran <code>docker restart caddy</code> "to force a retry", but the logs showed the certificate
+    had already been issued about two minutes before I did.
+  </p>
+
+  <h2>Result</h2>
+  <table>
+    <tr><th>Part</th><th>Before</th><th>After</th></tr>
+    <tr><td>Web server</td><td>Host package + systemd unit</td><td>One container, restarts itself</td></tr>
+    <tr><td>Config</td><td><code>/etc/caddy/Caddyfile</code></td><td><code>~/caddy/Caddyfile</code>, mounted in</td></tr>
+    <tr><td>Content</td><td><code>/var/www/html</code></td><td><code>~/caddy/site</code>. Deploy = <code>scp</code>, no restart</td></tr>
+    <tr><td>TLS</td><td>None, HTTP by IP</td><td>Let's Encrypt for apex and <code>www</code>, renewed automatically, stored in a volume</td></tr>
+  </table>
+
+  <h2>Smaller things that went wrong</h2>
+  <ul>
+    <li>
+      <strong><code>scp</code> from the wrong side.</strong> My first deploy ran inside the SSH session,
+      so <code>~/Downloads</code> meant the server's home folder and the error was
+      <code>stat local "/home/…/Downloads/…": No such file or directory</code>. <code>scp</code> has to
+      run on the machine that has the files.
+    </li>
+    <li>
+      <strong>Trusting the browser about DNS.</strong> Right after the DNS change the browser still
+      showed the registrar's proxy error. <code>dig +short</code> already returned the right address,
+      so the browser was serving a cached answer.
+    </li>
+  </ul>
+
+  <h2>What I learned</h2>
+  <ul>
+    <li>Keep the container and its state apart. Config, content and certificates live outside the container, and that's why <code>docker rm</code> was safe to run.</li>
+    <li>Fixing DNS for the apex doesn't fix it for the domain. Check every name you serve, and look for the registrar's default records, especially wildcards.</li>
+    <li>ACME errors are specific. This one named the exact host Let's Encrypt reached, which pointed straight at DNS.</li>
+    <li>Read the logs before stepping in. The retry had already succeeded by the time I restarted the container.</li>
+  </ul>
+
+  <h2>Loose ends</h2>
+  <ul>
+    <li>Move the <code>docker run</code> command into a <code>compose.yaml</code>, so the setup lives in a file under version control and not in shell history.</li>
+    <li>Publish <code>443/udp</code> as well. Caddy enables HTTP/3, but only TCP 443 is published, so browsers fall back to HTTP/2.</li>
+    <li>Ports published by Docker get their own iptables rules, and those rules <strong>bypass ufw</strong>. That's fine for 80 and 443, which are meant to be public. Anything published later needs binding to <code>127.0.0.1</code> or rules in the <code>DOCKER-USER</code> chain.</li>
+    <li>Remove the disabled host Caddy package, so there's only one web server on the machine.</li>
+    <li>Run <code>caddy fmt</code>. The logs warn that the Caddyfile isn't formatted.</li>
+    <li>Add uptime monitoring and a public status page.</li>
+  </ul>
+
+  <a class="back" href="/cases/">← Back to all cases</a>
+</main>
+
+<footer>
+  <div class="wrap">The domain and paths here are real. The server address and usernames are left out on purpose. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>

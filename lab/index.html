@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lab — Illia Nikitchenko</title>
+  <meta name="description" content="The home lab: what it runs, what it's for, and how it connects to the public VPS.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="/">Illia Nikitchenko</a>
+    <nav>
+      <a href="/cases/">Cases</a>
+      <a href="/infrastructure/">Infrastructure</a>
+      <a href="/lab/" class="active">Lab</a>
+      <a href="/learning/">Learning</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Lab</h1>
+  <p class="lead">
+    My home machine is a lab, not a production server: I power it on when I want
+    to test something I do not want to try on the VPS first. It ran Proxmox, then
+    Debian 13 with WireGuard for remote access to my home network.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 220" role="img" aria-label="Network diagram: clients reach the home WireGuard server through the internet and a router with UDP port forwarding">
+      <rect class="box" x="10" y="20" width="130" height="60" rx="8"/>
+      <text x="75" y="48" text-anchor="middle">Laptop</text>
+      <text class="small" x="75" y="66" text-anchor="middle">WireGuard client</text>
+
+      <rect class="box" x="10" y="130" width="130" height="60" rx="8"/>
+      <text x="75" y="158" text-anchor="middle">Phone</text>
+      <text class="small" x="75" y="176" text-anchor="middle">WireGuard client</text>
+
+      <rect class="box" x="270" y="75" width="110" height="60" rx="8"/>
+      <text x="325" y="103" text-anchor="middle">Internet</text>
+      <text class="small" x="325" y="121" text-anchor="middle">dynamic DNS</text>
+
+      <rect class="box" x="450" y="75" width="90" height="60" rx="8"/>
+      <text x="495" y="103" text-anchor="middle">Router</text>
+      <text class="small" x="495" y="121" text-anchor="middle">51820/UDP</text>
+
+      <rect class="box hl" x="590" y="75" width="100" height="60" rx="8"/>
+      <text x="640" y="103" text-anchor="middle">Lab server</text>
+      <text class="small" x="640" y="121" text-anchor="middle">192.168.x.x</text>
+
+      <path class="line" d="M140 50 L270 95"/>
+      <path class="line" d="M140 160 L270 115"/>
+      <path class="ok" d="M380 105 L450 105"/>
+      <path class="ok" d="M540 105 L590 105"/>
+    </svg>
+    <figcaption>Remote access to the lab. From outside: connect by domain name. From inside the LAN: connect by local IP (see the NAT hairpin case).</figcaption>
+  </figure>
+
+  <h2>What runs here now</h2>
+  <ul>
+    <li>Debian 13, kept separate from anything public-facing.</li>
+    <li>WireGuard, for remote access back into the home network when away.</li>
+    <li>Nothing the public internet can reach directly — no inbound port forwards to this machine anymore (see <a href="/infrastructure/">Infrastructure</a> for why that changed).</li>
+  </ul>
+
+  <h2>What it's for</h2>
+  <p>
+    This is where I try things that might break: new services, Docker networking,
+    firewall rules I'm not sure about, VLANs, backup strategies. If something here
+    gets wedged, nothing public goes down — that separation is the whole point of
+    running the site on its own VPS instead of at home.
+  </p>
+
+  <h2>Next experiments</h2>
+  <ul>
+    <li>An Ansible playbook that can rebuild the VPS from scratch</li>
+    <li>VLANs to split the home network</li>
+    <li>Proxmox again, with the lab services as separate VMs</li>
+    <li>Backups, with a restore that I've actually tested</li>
+    <li>A second container host for testing changes before the VPS</li>
+  </ul>
+
+  <p class="crumbs"><a href="/">← Home</a></p>
+</main>
+
+<footer>
+  <div class="wrap">Built by hand with plain HTML and CSS, served by Caddy in a Docker container on a VPS. · <a href="/contact/">Contact</a></div>
+</footer>
+</body>
+</html>
